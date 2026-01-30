@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// ユーザー
+/// Stripe Customerと1:1で紐づく
+model User {
+  id               String         @id @default(uuid())
+  email            String         @unique
+  stripeCustomerId String?        @unique @map("stripe_customer_id")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  payments         Payment[]
+  subscriptions    Subscription[]
+
+  @@map("users")
+}
+
+/// 決済レコード
+/// Stripe PaymentIntentの状態をキャッシュ
+/// 注意: このテーブルの status は Stripe の状態の「参照」であり、正ではない
+model Payment {
+  id                     String        @id @default(uuid())
+  userId                 String        @map("user_id")
+  stripePaymentIntentId  String        @unique @map("stripe_payment_intent_id")
+  amount                 Int
+  currency               String        @default("jpy")
+  status                 PaymentStatus @default(PENDING)
+  productId              String?       @map("product_id")
+  metadata               Json?
+  createdAt              DateTime      @default(now()) @map("created_at")
+  updatedAt              DateTime      @updatedAt @map("updated_at")
+  user                   User          @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@map("payments")
+}
+
+/// サブスクリプションレコード
+/// Stripe Subscriptionの状態をキャッシュ
+model Subscription {
+  id                     String             @id @default(uuid())
+  userId                 String             @map("user_id")
+  stripeSubscriptionId   String             @unique @map("stripe_subscription_id")
+  stripePriceId          String             @map("stripe_price_id")
+  status                 SubscriptionStatus @default(INCOMPLETE)
+  currentPeriodStart     DateTime?          @map("current_period_start")
+  currentPeriodEnd       DateTime?          @map("current_period_end")
+  cancelAtPeriodEnd      Boolean            @default(false) @map("cancel_at_period_end")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+  user                   User               @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+/// Webhookイベントログ
+/// 冪等性確保のため、処理済みイベントを記録
+model WebhookEvent {
+  id            String   @id @default(uuid())
+  stripeEventId String   @unique @map("stripe_event_id")
+  eventType     String   @map("event_type")
+  processedAt   DateTime @default(now()) @map("processed_at")
+
+  @@map("webhook_events")
+}
+
+/// 決済ステータス
+/// Stripe PaymentIntent の status に対応
+enum PaymentStatus {
+  PENDING              // 作成直後
+  REQUIRES_PAYMENT_METHOD
+  REQUIRES_CONFIRMATION
+  REQUIRES_ACTION      // 3Dセキュア等
+  PROCESSING
+  SUCCEEDED
+  CANCELED
+  FAILED
+
+  @@map("payment_status")
+}
+
+/// サブスクリプションステータス
+/// Stripe Subscription の status に対応
+enum SubscriptionStatus {
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  PAUSED
+
+  @@map("subscription_status")
+}
